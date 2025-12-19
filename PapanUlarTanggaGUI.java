@@ -4,7 +4,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.*;
 import java.util.List;
-import java.awt.geom.QuadCurve2D;
 import javax.sound.sampled.*;
 import java.io.File;
 import javax.swing.Timer;
@@ -24,23 +23,23 @@ public class PapanUlarTanggaGUI extends JFrame {
     private static final Color BOARD_BORDER = new Color(0x8B0000);
     private static final Color UI_BG = new Color(0x006064);
     private static final Color PRIME_COLOR = new Color(0xFFD700);
-    private static final Color LINK_COLOR = new Color(0x4CAF50);
 
     private List<Player> players;
     private Map<Integer, SquarePanel> boardSquaresMap;
     private JButton lemparDaduButton;
     private JButton exitButton;
     private DicePanel diceDisplay;
-    private JLabel statusLabel;
+    private JLabel turnLabel;
     private JPanel boardPanel;
-    private JPanel playerStatusPanel;
+    private JPanel playerListPanel;
+    private JPanel leaderboardPanel;
 
     private Image mainBgImage;
-    private Image controlBgImage;
     private Clip backgroundMusic;
     public FloatControl volumeControl;
 
     private final Map<Integer, Integer> links = new HashMap<>();
+    private final Map<Integer, Integer> nodeBonusPoints = new HashMap<>();
     private final int[][] papanData = new int[UKURAN_PAPAN][UKURAN_PAPAN];
     private int currentPlayerIndex = 0;
     private Random random = new Random();
@@ -48,13 +47,13 @@ public class PapanUlarTanggaGUI extends JFrame {
 
     public PapanUlarTanggaGUI() {
         setupLinks();
+        setupNodeBonusPoints();
         initializeBoardData();
 
         try {
             mainBgImage = new ImageIcon("images/BOS_1.png").getImage();
-            controlBgImage = new ImageIcon("images/BOS_4.png").getImage();
         } catch (Exception e) {
-            System.out.println("Gagal memuat gambar.");
+            System.out.println("Gagal memuat gambar background.");
         }
 
         playBackgroundMusic("sound/BOS_2.wav");
@@ -85,16 +84,11 @@ public class PapanUlarTanggaGUI extends JFrame {
                     Clip sfx = AudioSystem.getClip();
                     sfx.open(audioInput);
                     sfx.start();
-
                     sfx.addLineListener(event -> {
-                        if (event.getType() == LineEvent.Type.STOP) {
-                            sfx.close();
-                        }
+                        if (event.getType() == LineEvent.Type.STOP) sfx.close();
                     });
                 }
-            } catch (Exception e) {
-                System.err.println("Error SFX: " + e.getMessage());
-            }
+            } catch (Exception e) { System.err.println("Error SFX: " + e.getMessage()); }
         }).start();
     }
 
@@ -105,163 +99,100 @@ public class PapanUlarTanggaGUI extends JFrame {
         }
     }
 
+    private void setupNodeBonusPoints() {
+        // Setiap node memiliki bonus point acak antara 10-50
+        for (int i = 1; i <= 64; i++) {
+            nodeBonusPoints.put(i, 10 + random.nextInt(41));
+        }
+        // Nodes khusus mendapat bonus lebih besar
+        nodeBonusPoints.put(64, 100); // Finishing node
+        for (int key : links.keySet()) {
+            nodeBonusPoints.put(links.get(key), 50 + random.nextInt(51)); // Target tangga
+        }
+    }
+
     private void handleDiceRoll(ActionEvent e) {
         if (players.isEmpty() || gameEnded) return;
 
         lemparDaduButton.setEnabled(false);
-        int diceRes = random.nextInt(6) + 1;
+        int diceRes = random.nextInt(9) - 2;
+        if (diceRes == 0) diceRes = 1;
+
         diceDisplay.setDiceValue(diceRes);
-
         Player p = players.get(currentPlayerIndex);
-        int oldPos = p.getPosition();
-        int nextPos = oldPos + diceRes;
 
-        if (nextPos <= 64) {
-            playSoundEffect("sound/bos_3.wav");
-            p.setPosition(nextPos);
+        int targetPos = Math.max(1, Math.min(p.getPosition() + diceRes, 64));
+        moveAnimated(p, targetPos);
+    }
 
-            // Cek link (tangga/ular)
-            if (links.containsKey(nextPos)) {
-                int linkedPos = links.get(nextPos);
-                Timer linkTimer = new Timer(500, evt -> {
-                    p.setPosition(linkedPos);
-                    updateBoardUI();
-                    if (linkedPos > nextPos) {
-                        playSoundEffect("sound/bos_4.wav"); // Tangga
-                    } else {
-                        playSoundEffect("sound/bos_5.wav"); // Ular
-                    }
-                    checkWinner(p);
-                });
-                linkTimer.setRepeats(false);
-                linkTimer.start();
-            } else {
-                checkWinner(p);
+    private void moveAnimated(Player p, int targetPos) {
+        Timer moveTimer = new Timer(300, null);
+        moveTimer.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (p.getPosition() < targetPos) {
+                    p.setPosition(p.getPosition() + 1);
+                } else if (p.getPosition() > targetPos) {
+                    p.setPosition(p.getPosition() - 1);
+                } else {
+                    moveTimer.stop();
+                    // Collect bonus point from end node
+                    int bonusFromNode = nodeBonusPoints.getOrDefault(targetPos, 0);
+                    p.addBonusPoints(bonusFromNode);
+                    processTileEnd(p);
+                    return;
+                }
+                updateBoardUI();
+                updatePlayerStatus();
             }
+        });
+        moveTimer.start();
+    }
+
+    private void processTileEnd(Player p) {
+        int currentPos = p.getPosition();
+        if (links.containsKey(currentPos)) {
+            int linkedPos = links.get(currentPos);
+            Timer ladderTimer = new Timer(500, evt -> {
+                p.setPosition(linkedPos);
+                // Collect bonus from ladder target
+                int bonusFromTarget = nodeBonusPoints.getOrDefault(linkedPos, 0);
+                p.addBonusPoints(bonusFromTarget);
+                playSoundEffect("sound/bos_4.wav");
+                updateBoardUI();
+                updatePlayerStatus();
+                checkWinner(p);
+                finishTurn();
+            });
+            ladderTimer.setRepeats(false);
+            ladderTimer.start();
+        } else {
+            updatePlayerStatus();
+            checkWinner(p);
+            finishTurn();
         }
+    }
 
-        updateBoardUI();
-        updatePlayerStatus();
-
+    private void finishTurn() {
         if (!gameEnded) {
             currentPlayerIndex = (currentPlayerIndex + 1) % players.size();
-            statusLabel.setText("Giliran: " + players.get(currentPlayerIndex).getName());
+            updateTurnIndicator();
+            lemparDaduButton.setEnabled(true);
         }
-
-        lemparDaduButton.setEnabled(!gameEnded);
     }
 
     private void checkWinner(Player p) {
         if (p.getPosition() >= 64 && !gameEnded) {
             gameEnded = true;
             playSoundEffect("sound/bos_6.wav");
-            Timer winTimer = new Timer(500, evt -> showWinnerDialog(p));
+
+            PriorityQueue<Player> leaderboard = new PriorityQueue<>();
+            leaderboard.addAll(players);
+
+            Timer winTimer = new Timer(500, evt -> showWinnerDialog(leaderboard));
             winTimer.setRepeats(false);
             winTimer.start();
         }
-    }
-
-    private void showWinnerDialog(Player winner) {
-        JDialog dialog = new JDialog(this, "🎉 Pemenang!", true);
-        dialog.setLayout(new BorderLayout());
-
-        // Panel dengan animasi warna
-        JPanel contentPanel = new JPanel() {
-            private float hue = 0;
-            @Override
-            protected void paintComponent(Graphics g) {
-                super.paintComponent(g);
-                Graphics2D g2d = (Graphics2D) g;
-
-                // Gradient background berubah warna
-                Color color1 = Color.getHSBColor(hue, 0.8f, 0.9f);
-                Color color2 = Color.getHSBColor((hue + 0.3f) % 1.0f, 0.8f, 0.6f);
-
-                GradientPaint gradient = new GradientPaint(
-                        0, 0, color1,
-                        getWidth(), getHeight(), color2
-                );
-                g2d.setPaint(gradient);
-                g2d.fillRect(0, 0, getWidth(), getHeight());
-
-                // Gambar bintang-bintang
-                g2d.setColor(new Color(255, 255, 255, 150));
-                Random r = new Random(42);
-                for (int i = 0; i < 50; i++) {
-                    int x = r.nextInt(getWidth());
-                    int y = r.nextInt(getHeight());
-                    int size = 2 + r.nextInt(4);
-                    g2d.fillOval(x, y, size, size);
-                }
-            }
-        };
-        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
-        contentPanel.setBorder(BorderFactory.createEmptyBorder(40, 50, 40, 50));
-
-        // Animasi warna background
-        Timer colorTimer = new Timer(50, new ActionListener() {
-            float hue = 0;
-            public void actionPerformed(ActionEvent e) {
-                hue = (hue + 0.01f) % 1.0f;
-                try {
-                    java.lang.reflect.Field field = contentPanel.getClass().getDeclaredField("hue");
-                    field.setAccessible(true);
-                    field.setFloat(contentPanel, hue);
-                } catch (Exception ex) {}
-                contentPanel.repaint();
-            }
-        });
-        colorTimer.start();
-
-        JLabel trophyLabel = new JLabel("🏆", SwingConstants.CENTER);
-        trophyLabel.setFont(new Font("Arial", Font.PLAIN, 80));
-        trophyLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        contentPanel.add(trophyLabel);
-        contentPanel.add(Box.createVerticalStrut(20));
-
-        JLabel winnerLabel = new JLabel("SELAMAT!", SwingConstants.CENTER);
-        winnerLabel.setFont(new Font("Arial Black", Font.BOLD, 36));
-        winnerLabel.setForeground(Color.WHITE);
-        winnerLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        contentPanel.add(winnerLabel);
-        contentPanel.add(Box.createVerticalStrut(15));
-
-        JLabel nameLabel = new JLabel(winner.getName(), SwingConstants.CENTER);
-        nameLabel.setFont(new Font("Arial", Font.BOLD, 28));
-        nameLabel.setForeground(winner.getColor());
-        nameLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        contentPanel.add(nameLabel);
-        contentPanel.add(Box.createVerticalStrut(10));
-
-        JLabel messageLabel = new JLabel("Telah memenangkan permainan!", SwingConstants.CENTER);
-        messageLabel.setFont(new Font("Arial", Font.PLAIN, 18));
-        messageLabel.setForeground(Color.WHITE);
-        messageLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        contentPanel.add(messageLabel);
-        contentPanel.add(Box.createVerticalStrut(30));
-
-        JButton closeBtn = new JButton("Kembali ke Lobby");
-        closeBtn.setFont(new Font("Arial", Font.BOLD, 16));
-        closeBtn.setBackground(new Color(0xFFC700));
-        closeBtn.setForeground(new Color(0x4A2C00));
-        closeBtn.setFocusPainted(false);
-        closeBtn.setBorderPainted(false);
-        closeBtn.setPreferredSize(new Dimension(200, 45));
-        closeBtn.setMaximumSize(new Dimension(200, 45));
-        closeBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
-        closeBtn.addActionListener(e -> {
-            colorTimer.stop();
-            dialog.dispose();
-            this.dispose();
-            SwingUtilities.invokeLater(() -> new LobbyFrame(new PapanUlarTanggaGUI()));
-        });
-
-        contentPanel.add(closeBtn);
-
-        dialog.add(contentPanel);
-        dialog.setSize(450, 450);
-        dialog.setLocationRelativeTo(this);
-        dialog.setVisible(true);
     }
 
     private JPanel createControlPanel() {
@@ -269,211 +200,293 @@ public class PapanUlarTanggaGUI extends JFrame {
             @Override
             protected void paintComponent(Graphics g) {
                 super.paintComponent(g);
-                if (controlBgImage != null) g.drawImage(controlBgImage, 0, 0, getWidth(), getHeight(), this);
+                Graphics2D g2d = (Graphics2D) g;
+                GradientPaint gradient = new GradientPaint(
+                        0, 0, new Color(0x004D40),
+                        0, getHeight(), new Color(0x00695C)
+                );
+                g2d.setPaint(gradient);
+                g2d.fillRect(0, 0, getWidth(), getHeight());
             }
         };
         cp.setLayout(new BoxLayout(cp, BoxLayout.Y_AXIS));
-        cp.setPreferredSize(new Dimension(250, 0));
+        cp.setPreferredSize(new Dimension(280, 0));
         cp.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
-        cp.setOpaque(false);
 
-        // Header "KONTROL"
-        JLabel kontrolLabel = new JLabel("☐ KONTROL");
-        kontrolLabel.setFont(new Font("Arial", Font.BOLD, 18));
-        kontrolLabel.setForeground(Color.WHITE);
-        kontrolLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        cp.add(kontrolLabel);
-        cp.add(Box.createVerticalStrut(15));
-
-        // Status Giliran dengan border
-        statusLabel = new JLabel("Giliran: -", SwingConstants.CENTER);
-        statusLabel.setForeground(new Color(0xFFD700));
-        statusLabel.setFont(new Font("Arial", Font.BOLD, 16));
-        statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        cp.add(statusLabel);
-        cp.add(Box.createVerticalStrut(15));
-
-        // Panel Papan Dadu dengan border kuning
-        JPanel dicePanel = new JPanel();
-        dicePanel.setLayout(new BorderLayout());
-        dicePanel.setOpaque(false);
-        dicePanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(0xFFD700), 3),
+        // Turn Indicator Section
+        JPanel turnPanel = new JPanel();
+        turnPanel.setLayout(new BoxLayout(turnPanel, BoxLayout.Y_AXIS));
+        turnPanel.setOpaque(false);
+        turnPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xFFC107), 2),
                 BorderFactory.createEmptyBorder(10, 10, 10, 10)
         ));
-        dicePanel.setMaximumSize(new Dimension(220, 180));
+        turnPanel.setMaximumSize(new Dimension(250, 100));
+
+        JLabel turnTitle = new JLabel("🎯 TURN:");
+        turnTitle.setFont(new Font("Arial", Font.BOLD, 14));
+        turnTitle.setForeground(new Color(0xFFC107));
+        turnTitle.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        turnLabel = new JLabel("Pemain 1");
+        turnLabel.setFont(new Font("Arial", Font.BOLD, 18));
+        turnLabel.setForeground(Color.WHITE);
+        turnLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel posPointLabel = new JLabel("Posisi: 1 | Poin: 0");
+        posPointLabel.setFont(new Font("Arial", Font.PLAIN, 12));
+        posPointLabel.setForeground(Color.YELLOW);
+        posPointLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        posPointLabel.setName("posPointLabel");
+
+        turnPanel.add(turnTitle);
+        turnPanel.add(Box.createVerticalStrut(5));
+        turnPanel.add(turnLabel);
+        turnPanel.add(posPointLabel);
+
+        cp.add(turnPanel);
+        cp.add(Box.createVerticalStrut(15));
+
+        // Player List Section
+        JPanel playerSection = new JPanel();
+        playerSection.setLayout(new BoxLayout(playerSection, BoxLayout.Y_AXIS));
+        playerSection.setOpaque(false);
+        playerSection.setMaximumSize(new Dimension(250, 200));
+
+        JLabel playerTitle = new JLabel("👥 PEMAIN");
+        playerTitle.setFont(new Font("Arial", Font.BOLD, 14));
+        playerTitle.setForeground(Color.WHITE);
+        playerTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        playerListPanel = new JPanel();
+        playerListPanel.setLayout(new BoxLayout(playerListPanel, BoxLayout.Y_AXIS));
+        playerListPanel.setOpaque(false);
+
+        playerSection.add(playerTitle);
+        playerSection.add(Box.createVerticalStrut(5));
+        playerSection.add(playerListPanel);
+
+        cp.add(playerSection);
+        cp.add(Box.createVerticalStrut(15));
+
+        // Leaderboard Section
+        JPanel leaderboardSection = new JPanel();
+        leaderboardSection.setLayout(new BoxLayout(leaderboardSection, BoxLayout.Y_AXIS));
+        leaderboardSection.setOpaque(false);
+        leaderboardSection.setMaximumSize(new Dimension(250, 200));
+
+        JLabel leaderTitle = new JLabel("🏆 LEADERBOARD");
+        leaderTitle.setFont(new Font("Arial", Font.BOLD, 14));
+        leaderTitle.setForeground(new Color(0xFFC107));
+        leaderTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        leaderboardPanel = new JPanel();
+        leaderboardPanel.setLayout(new BoxLayout(leaderboardPanel, BoxLayout.Y_AXIS));
+        leaderboardPanel.setOpaque(false);
+
+        leaderboardSection.add(leaderTitle);
+        leaderboardSection.add(Box.createVerticalStrut(5));
+        leaderboardSection.add(leaderboardPanel);
+
+        cp.add(leaderboardSection);
+        cp.add(Box.createVerticalStrut(15));
+
+        // Dice Panel
+        JPanel diceWrapper = new JPanel();
+        diceWrapper.setLayout(new BoxLayout(diceWrapper, BoxLayout.Y_AXIS));
+        diceWrapper.setOpaque(false);
+        diceWrapper.setBorder(BorderFactory.createLineBorder(Color.YELLOW, 2));
+        diceWrapper.setMaximumSize(new Dimension(240, 200));
 
         diceDisplay = new DicePanel(0);
         diceDisplay.setAlignmentX(Component.CENTER_ALIGNMENT);
-        diceDisplay.setOpaque(false);
-        dicePanel.add(diceDisplay, BorderLayout.CENTER);
+        diceWrapper.add(Box.createVerticalStrut(10));
+        diceWrapper.add(diceDisplay);
 
-        cp.add(dicePanel);
-        cp.add(Box.createVerticalStrut(15));
-
-        // Tombol Lempar Dadu
-        lemparDaduButton = new JButton("⚅ LEMPAR DADU");
+        lemparDaduButton = new JButton("⚄ LEMPAR DADU");
+        lemparDaduButton.setBackground(new Color(0xFFC107));
         lemparDaduButton.setFont(new Font("Arial", Font.BOLD, 14));
-        lemparDaduButton.setBackground(new Color(0xFFD700));
-        lemparDaduButton.setForeground(Color.BLACK);
-        lemparDaduButton.setFocusPainted(false);
-        lemparDaduButton.setMaximumSize(new Dimension(220, 40));
         lemparDaduButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         lemparDaduButton.addActionListener(this::handleDiceRoll);
-        cp.add(lemparDaduButton);
+        diceWrapper.add(Box.createVerticalStrut(10));
+        diceWrapper.add(lemparDaduButton);
+        diceWrapper.add(Box.createVerticalStrut(10));
+
+        cp.add(diceWrapper);
         cp.add(Box.createVerticalStrut(15));
 
-        // Tombol Kembali ke Lobby
-        exitButton = new JButton("⟲ KEMBALI KE LOBBY");
-        exitButton.setFont(new Font("Arial", Font.BOLD, 12));
-        exitButton.setBackground(new Color(0xDC3545));
+        // Settings Button
+        JButton settingsBtn = new JButton("⚙️ PENGATURAN");
+        settingsBtn.setBackground(new Color(0x4CAF50));
+        settingsBtn.setForeground(Color.WHITE);
+        settingsBtn.setMaximumSize(new Dimension(240, 35));
+        settingsBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        settingsBtn.addActionListener(e -> showInGameSettings());
+        cp.add(settingsBtn);
+        cp.add(Box.createVerticalStrut(10));
+
+        // Exit Button
+        exitButton = new JButton("🔙 KEMBALI KE LOBBY");
+        exitButton.setBackground(new Color(0xD32F2F));
         exitButton.setForeground(Color.WHITE);
-        exitButton.setFocusPainted(false);
-        exitButton.setMaximumSize(new Dimension(220, 35));
+        exitButton.setMaximumSize(new Dimension(240, 35));
         exitButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         exitButton.addActionListener(e -> {
             this.dispose();
             SwingUtilities.invokeLater(() -> new LobbyFrame(new PapanUlarTanggaGUI()));
         });
         cp.add(exitButton);
-        cp.add(Box.createVerticalStrut(15));
-
-        // Panel Status Pemain dengan header
-        JPanel turnSection = new JPanel();
-        turnSection.setLayout(new BoxLayout(turnSection, BoxLayout.Y_AXIS));
-        turnSection.setOpaque(false);
-        turnSection.setMaximumSize(new Dimension(220, 300));
-        turnSection.setBorder(BorderFactory.createEmptyBorder(10, 5, 10, 5));
-
-        JLabel turnHeader = new JLabel("🎮 TURN:");
-        turnHeader.setFont(new Font("Arial", Font.BOLD, 16));
-        turnHeader.setForeground(new Color(0xFFD700));
-        turnHeader.setAlignmentX(Component.LEFT_ALIGNMENT);
-        turnSection.add(turnHeader);
-        turnSection.add(Box.createVerticalStrut(10));
-
-        playerStatusPanel = new JPanel();
-        playerStatusPanel.setLayout(new BoxLayout(playerStatusPanel, BoxLayout.Y_AXIS));
-        playerStatusPanel.setOpaque(false);
-        playerStatusPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        turnSection.add(playerStatusPanel);
-
-        cp.add(turnSection);
-        cp.add(Box.createVerticalStrut(15));
-
-        // Leaderboard section
-        JPanel leaderboardSection = new JPanel();
-        leaderboardSection.setLayout(new BoxLayout(leaderboardSection, BoxLayout.Y_AXIS));
-        leaderboardSection.setOpaque(false);
-        leaderboardSection.setMaximumSize(new Dimension(220, 200));
-
-        JLabel leaderHeader = new JLabel("🏆 LEADERBOARD");
-        leaderHeader.setFont(new Font("Arial", Font.BOLD, 16));
-        leaderHeader.setForeground(new Color(0xFFD700));
-        leaderHeader.setAlignmentX(Component.LEFT_ALIGNMENT);
-        leaderboardSection.add(leaderHeader);
-        leaderboardSection.add(Box.createVerticalStrut(10));
-
-        playerStatusPanel = new JPanel();
-        playerStatusPanel.setLayout(new BoxLayout(playerStatusPanel, BoxLayout.Y_AXIS));
-        playerStatusPanel.setOpaque(false);
-        playerStatusPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        leaderboardSection.add(playerStatusPanel);
-
-        cp.add(leaderboardSection);
-        cp.add(Box.createVerticalGlue());
 
         return cp;
     }
 
-    private void updatePlayerStatus() {
-        playerStatusPanel.removeAll();
+    private void showInGameSettings() {
+        JDialog dialog = new JDialog(this, "⚙️ Pengaturan Permainan", true);
+        dialog.setLayout(new BorderLayout());
 
-        for (int i = 0; i < players.size(); i++) {
-            Player p = players.get(i);
-            JPanel playerPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 3));
-            playerPanel.setOpaque(false);
-            playerPanel.setMaximumSize(new Dimension(210, 28));
+        JPanel contentPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2d = (Graphics2D) g;
+                GradientPaint gradient = new GradientPaint(
+                        0, 0, new Color(0x1A237E),
+                        0, getHeight(), new Color(0x311B92)
+                );
+                g2d.setPaint(gradient);
+                g2d.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(30, 40, 30, 40));
 
-            // Icon emoji untuk pemain
-            JLabel iconLabel = new JLabel("🎯");
-            iconLabel.setFont(new Font("Arial", Font.PLAIN, 14));
+        JLabel titleLabel = new JLabel("🔊 Kontrol Volume");
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 26));
+        titleLabel.setForeground(Color.WHITE);
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        contentPanel.add(titleLabel);
+        contentPanel.add(Box.createVerticalStrut(30));
 
-            // Nama pemain dengan warna
-            JLabel nameLabel = new JLabel(p.getName());
-            nameLabel.setForeground(p.getColor());
-            nameLabel.setFont(new Font("Arial", Font.BOLD, 13));
+        JSlider volSlider = new JSlider(0, 100);
+        volSlider.setOpaque(false);
+        volSlider.setForeground(Color.WHITE);
+        volSlider.setMajorTickSpacing(25);
+        volSlider.setMinorTickSpacing(5);
+        volSlider.setPaintTicks(true);
+        volSlider.setPaintLabels(true);
 
-            // Posisi dan poin (selalu 0 untuk sekarang)
-            JLabel posLabel = new JLabel("Posisi: " + p.getPosition() + " | Poin: 0");
-            posLabel.setForeground(Color.WHITE);
-            posLabel.setFont(new Font("Arial", Font.PLAIN, 11));
-
-            JPanel infoPanel = new JPanel();
-            infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
-            infoPanel.setOpaque(false);
-
-            JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-            nameRow.setOpaque(false);
-            nameRow.add(nameLabel);
-
-            JPanel posRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-            posRow.setOpaque(false);
-            posRow.add(posLabel);
-
-            infoPanel.add(nameRow);
-            infoPanel.add(posRow);
-
-            playerPanel.add(iconLabel);
-            playerPanel.add(infoPanel);
-
-            playerStatusPanel.add(playerPanel);
-            playerStatusPanel.add(Box.createVerticalStrut(8));
+        if (volumeControl != null) {
+            float currentVol = (float) Math.pow(10f, volumeControl.getValue() / 20f);
+            volSlider.setValue((int) (currentVol * 100));
         }
 
-        // Tambahkan leaderboard ranking
-        playerStatusPanel.add(Box.createVerticalStrut(10));
+        volSlider.addChangeListener(e -> setVolume(volSlider.getValue() / 100f));
 
-        // Sort players by position (descending)
-        List<Player> sortedPlayers = new ArrayList<>(players);
-        sortedPlayers.sort((p1, p2) -> Integer.compare(p2.getPosition(), p1.getPosition()));
+        contentPanel.add(volSlider);
+        contentPanel.add(Box.createVerticalStrut(30));
+
+        JButton okBtn = new JButton("Kembali");
+        okBtn.setFont(new Font("Arial", Font.BOLD, 16));
+        okBtn.setBackground(new Color(0x4CAF50));
+        okBtn.setForeground(Color.WHITE);
+        okBtn.setFocusPainted(false);
+        okBtn.setBorderPainted(false);
+        okBtn.setPreferredSize(new Dimension(120, 40));
+        okBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        okBtn.addActionListener(e -> dialog.dispose());
+
+        contentPanel.add(okBtn);
+
+        dialog.add(contentPanel);
+        dialog.setSize(400, 250);
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
+    private void updateTurnIndicator() {
+        Player currentPlayer = players.get(currentPlayerIndex);
+        turnLabel.setText(currentPlayer.getName());
+        turnLabel.setForeground(currentPlayer.getColor());
+
+        // Update position and points
+        Component[] components = ((JPanel)turnLabel.getParent()).getComponents();
+        for (Component c : components) {
+            if (c.getName() != null && c.getName().equals("posPointLabel")) {
+                ((JLabel)c).setText("Posisi: " + currentPlayer.getPosition() + " | Poin: " + currentPlayer.getBonusPoints());
+                break;
+            }
+        }
+    }
+
+    private void updatePlayerStatus() {
+        // Update player list
+        playerListPanel.removeAll();
+        for (int i = 0; i < players.size(); i++) {
+            Player p = players.get(i);
+            JPanel pnl = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 2));
+            pnl.setOpaque(false);
+
+            String bullet = (i == currentPlayerIndex) ? "● " : "○ ";
+            JLabel lbl = new JLabel(bullet + p.getName());
+            lbl.setForeground(p.getColor());
+            lbl.setFont(new Font("Arial", Font.PLAIN, 12));
+
+            JLabel posLabel = new JLabel("Posisi: " + p.getPosition() + " | Poin: " + p.getBonusPoints());
+            posLabel.setForeground(Color.LIGHT_GRAY);
+            posLabel.setFont(new Font("Arial", Font.PLAIN, 10));
+
+            JPanel vPanel = new JPanel();
+            vPanel.setLayout(new BoxLayout(vPanel, BoxLayout.Y_AXIS));
+            vPanel.setOpaque(false);
+            vPanel.add(lbl);
+            vPanel.add(posLabel);
+
+            pnl.add(vPanel);
+            playerListPanel.add(pnl);
+        }
+        playerListPanel.revalidate();
+        playerListPanel.repaint();
+
+        // Update leaderboard
+        updateLeaderboard();
+
+        // Update turn indicator
+        updateTurnIndicator();
+    }
+
+    private void updateLeaderboard() {
+        leaderboardPanel.removeAll();
+
+        PriorityQueue<Player> pq = new PriorityQueue<>(players);
+        List<Player> sortedPlayers = new ArrayList<>();
+        while (!pq.isEmpty()) {
+            sortedPlayers.add(pq.poll());
+        }
 
         for (int i = 0; i < sortedPlayers.size(); i++) {
             Player p = sortedPlayers.get(i);
-            JPanel rankPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 2));
-            rankPanel.setOpaque(false);
-            rankPanel.setMaximumSize(new Dimension(210, 25));
+            JPanel pnl = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 2));
+            pnl.setOpaque(false);
 
-            JLabel rankLabel = new JLabel((i + 1) + ". ");
-            rankLabel.setForeground(Color.WHITE);
-            rankLabel.setFont(new Font("Arial", Font.BOLD, 12));
+            String medal = (i == 0) ? "🥇 " : (i == 1) ? "🥈 " : (i == 2) ? "🥉 " : (i + 1) + ". ";
+            JLabel lbl = new JLabel(medal + p.getName() + " - " + p.getBonusPoints() + " poin");
+            lbl.setForeground((i == 0) ? Color.YELLOW : Color.WHITE);
+            lbl.setFont(new Font("Arial", Font.PLAIN, 12));
 
-            JLabel playerLabel = new JLabel(p.getName() + " - 0 poin");
-            playerLabel.setForeground(p.getColor());
-            playerLabel.setFont(new Font("Arial", Font.PLAIN, 12));
-
-            rankPanel.add(rankLabel);
-            rankPanel.add(playerLabel);
-
-            playerStatusPanel.add(rankPanel);
+            pnl.add(lbl);
+            leaderboardPanel.add(pnl);
         }
 
-        playerStatusPanel.revalidate();
-        playerStatusPanel.repaint();
+        leaderboardPanel.revalidate();
+        leaderboardPanel.repaint();
     }
 
     private void setupLinks() {
-        // Tangga (naik)
         links.put(2, 13);
         links.put(5, 19);
         links.put(11, 29);
         links.put(17, 36);
         links.put(22, 41);
-
-        // Ular (turun)
-        links.put(48, 26);
-        links.put(55, 34);
-        links.put(62, 18);
     }
 
     private void initializeBoardData() {
@@ -492,10 +505,8 @@ public class PapanUlarTanggaGUI extends JFrame {
         this.players = initialPlayers;
         this.gameEnded = false;
         this.currentPlayerIndex = 0;
-
         setTitle("🎲 Ular Tangga Prima");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
         JPanel mainContentPanel = new JPanel(new BorderLayout(10, 10)) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -504,14 +515,10 @@ public class PapanUlarTanggaGUI extends JFrame {
             }
         };
         setContentPane(mainContentPanel);
-
         add(createBoardPanel(), BorderLayout.CENTER);
         add(createControlPanel(), BorderLayout.EAST);
-
         updateBoardUI();
         updatePlayerStatus();
-        statusLabel.setText("Giliran: " + players.get(currentPlayerIndex).getName());
-
         pack();
         setLocationRelativeTo(null);
         setVisible(true);
@@ -521,9 +528,9 @@ public class PapanUlarTanggaGUI extends JFrame {
         JPanel wrapper = new JPanel(new GridBagLayout());
         wrapper.setOpaque(false);
         boardPanel = new JPanel(new GridLayout(UKURAN_PAPAN, UKURAN_PAPAN, 2, 2));
-        boardPanel.setBackground(new Color(0x8B0000));
+        boardPanel.setBackground(Color.BLACK);
+        boardPanel.setBorder(BorderFactory.createLineBorder(Color.BLACK, 5));
         boardSquaresMap = new HashMap<>();
-
         for (int baris = 0; baris < UKURAN_PAPAN; baris++) {
             for (int kolom = 0; kolom < UKURAN_PAPAN; kolom++) {
                 int sq = papanData[baris][kolom];
@@ -549,10 +556,75 @@ public class PapanUlarTanggaGUI extends JFrame {
         if (n < 2) return false;
         if (n == 2) return true;
         if (n % 2 == 0) return false;
-        for (int i = 3; i * i <= n; i += 2) {
-            if (n % i == 0) return false;
-        }
+        for (int i = 3; i * i <= n; i += 2) if (n % i == 0) return false;
         return true;
+    }
+
+    private void showWinnerDialog(PriorityQueue<Player> leaderboard) {
+        JDialog dialog = new JDialog(this, "🎉 Permainan Selesai!", true);
+        dialog.setLayout(new BorderLayout());
+
+        JPanel contentPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2d = (Graphics2D) g;
+                GradientPaint gradient = new GradientPaint(
+                        0, 0, new Color(0x1A237E),
+                        0, getHeight(), new Color(0x4A148C)
+                );
+                g2d.setPaint(gradient);
+                g2d.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(30, 40, 30, 40));
+
+        JLabel titleLabel = new JLabel("🏆 HASIL AKHIR 🏆");
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 28));
+        titleLabel.setForeground(Color.YELLOW);
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        contentPanel.add(titleLabel);
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        List<Player> finalRanking = new ArrayList<>();
+        while (!leaderboard.isEmpty()) {
+            finalRanking.add(leaderboard.poll());
+        }
+
+        for (int i = 0; i < finalRanking.size(); i++) {
+            Player p = finalRanking.get(i);
+            String medal = (i == 0) ? "🥇" : (i == 1) ? "🥈" : (i == 2) ? "🥉" : String.valueOf(i + 1);
+
+            JLabel rankLabel = new JLabel(medal + " " + p.getName() + " - " + p.getBonusPoints() + " poin");
+            rankLabel.setFont(new Font("Arial", Font.BOLD, 18));
+            rankLabel.setForeground((i == 0) ? Color.YELLOW : Color.WHITE);
+            rankLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            contentPanel.add(rankLabel);
+            contentPanel.add(Box.createVerticalStrut(10));
+        }
+
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        JButton closeBtn = new JButton("Kembali ke Lobby");
+        closeBtn.setFont(new Font("Arial", Font.BOLD, 16));
+        closeBtn.setBackground(new Color(0xFFC107));
+        closeBtn.setForeground(new Color(0x4A2C00));
+        closeBtn.setFocusPainted(false);
+        closeBtn.setPreferredSize(new Dimension(200, 45));
+        closeBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        closeBtn.addActionListener(e -> {
+            dialog.dispose();
+            this.dispose();
+            new LobbyFrame(new PapanUlarTanggaGUI());
+        });
+
+        contentPanel.add(closeBtn);
+
+        dialog.add(contentPanel);
+        dialog.setSize(400, 450);
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
     private class SquarePanel extends JPanel {
@@ -562,90 +634,18 @@ public class PapanUlarTanggaGUI extends JFrame {
         public SquarePanel(int n) {
             this.number = n;
             setPreferredSize(new Dimension(UKURAN_KOTAK, UKURAN_KOTAK));
-
-            // Warna kotak berdasarkan bilangan prima
-            if (isPrime(n)) {
-                setBackground(PRIME_COLOR);
-            } else {
-                setBackground(n % 2 == 0 ? BOARD_LIGHT : BOARD_DARK);
-            }
-
+            setBackground(isPrime(n) ? PRIME_COLOR : (n % 2 == 0 ? BOARD_LIGHT : BOARD_DARK));
             setBorder(BorderFactory.createLineBorder(BOARD_BORDER, 1));
             setLayout(null);
         }
 
-        public void addPlayer(Player p) { playersHere.add(p); repaint(); }
-        public void clearPlayers() { playersHere.clear(); repaint(); }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            super.paintComponent(g);
-            Graphics2D g2d = (Graphics2D) g;
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            // Gambar nomor kotak
-            g2d.setFont(new Font("Arial", Font.BOLD, 16));
-            g2d.setColor(Color.BLACK);
-            String numStr = String.valueOf(number);
-            FontMetrics fm = g2d.getFontMetrics();
-            int numWidth = fm.stringWidth(numStr);
-            g2d.drawString(numStr, (getWidth() - numWidth) / 2, 20);
-
-            // Gambar link jika ada
-            if (links.containsKey(number)) {
-                int target = links.get(number);
-                g2d.setStroke(new BasicStroke(3));
-
-                if (target > number) {
-                    // Tangga (hijau)
-                    g2d.setColor(new Color(0, 200, 0));
-                    g2d.drawLine(10, getHeight() - 10, getWidth() - 10, 25);
-                    g2d.drawLine(10, getHeight() - 20, getWidth() - 10, 35);
-                    g2d.drawString("↑" + target, getWidth() - 25, getHeight() - 25);
-                } else {
-                    // Ular (merah)
-                    g2d.setColor(new Color(200, 0, 0));
-                    QuadCurve2D curve = new QuadCurve2D.Float(
-                            getWidth() / 2, 30,
-                            getWidth() / 2 + 15, getHeight() / 2,
-                            getWidth() / 2, getHeight() - 10
-                    );
-                    g2d.draw(curve);
-                    g2d.drawString("↓" + target, getWidth() - 25, getHeight() - 25);
-                }
-            }
-
-            // Gambar pemain
-            int playerSize = 18;
-            int startX = 10;
-            int startY = getHeight() - 35;
-
-            for (int i = 0; i < playersHere.size(); i++) {
-                Player p = playersHere.get(i);
-                int x = startX + (i % 2) * (playerSize + 4);
-                int y = startY - (i / 2) * (playerSize + 4);
-
-                g2d.setColor(p.getColor());
-                g2d.fillOval(x, y, playerSize, playerSize);
-                g2d.setColor(Color.WHITE);
-                g2d.setStroke(new BasicStroke(2));
-                g2d.drawOval(x, y, playerSize, playerSize);
-            }
-        }
-    }
-
-    private static class DicePanel extends JPanel {
-        private int val;
-
-        public DicePanel(int v) {
-            this.val = v;
-            setPreferredSize(new Dimension(140, 140));
-            setBackground(Color.WHITE);
-            setBorder(BorderFactory.createLineBorder(Color.BLACK, 2));
+        public void addPlayer(Player p) {
+            playersHere.add(p);
+            repaint();
         }
 
-        public void setDiceValue(int v) {
-            this.val = v;
+        public void clearPlayers() {
+            playersHere.clear();
             repaint();
         }
 
@@ -653,60 +653,53 @@ public class PapanUlarTanggaGUI extends JFrame {
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
             Graphics2D g2d = (Graphics2D) g;
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-            // Background putih sudah di-set di constructor
-
-            // Gambar titik dadu
+            // Draw number
             g2d.setColor(Color.BLACK);
-            int dotSize = 16;
-            int centerX = getWidth() / 2 - dotSize / 2;
-            int centerY = getHeight() / 2 - dotSize / 2;
-            int offset = 35;
+            g2d.setFont(new Font("Arial", Font.BOLD, 12));
+            g2d.drawString(String.valueOf(number), 5, 15);
 
-            switch(val) {
-                case 1:
-                    g2d.fillOval(centerX, centerY, dotSize, dotSize);
-                    break;
-                case 2:
-                    g2d.fillOval(centerX - offset, centerY - offset, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY + offset, dotSize, dotSize);
-                    break;
-                case 3:
-                    g2d.fillOval(centerX - offset, centerY - offset, dotSize, dotSize);
-                    g2d.fillOval(centerX, centerY, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY + offset, dotSize, dotSize);
-                    break;
-                case 4:
-                    g2d.fillOval(centerX - offset, centerY - offset, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY - offset, dotSize, dotSize);
-                    g2d.fillOval(centerX - offset, centerY + offset, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY + offset, dotSize, dotSize);
-                    break;
-                case 5:
-                    g2d.fillOval(centerX - offset, centerY - offset, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY - offset, dotSize, dotSize);
-                    g2d.fillOval(centerX, centerY, dotSize, dotSize);
-                    g2d.fillOval(centerX - offset, centerY + offset, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY + offset, dotSize, dotSize);
-                    break;
-                case 6:
-                    g2d.fillOval(centerX - offset, centerY - offset - 10, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY - offset - 10, dotSize, dotSize);
-                    g2d.fillOval(centerX - offset, centerY, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY, dotSize, dotSize);
-                    g2d.fillOval(centerX - offset, centerY + offset + 10, dotSize, dotSize);
-                    g2d.fillOval(centerX + offset, centerY + offset + 10, dotSize, dotSize);
-                    break;
-                default:
-                    // Jika belum dilempar, tampilkan tanda tanya
-                    g2d.setFont(new Font("Arial", Font.BOLD, 48));
-                    String qMark = "?";
-                    FontMetrics fm = g2d.getFontMetrics();
-                    int x = (getWidth() - fm.stringWidth(qMark)) / 2;
-                    int y = ((getHeight() - fm.getHeight()) / 2) + fm.getAscent();
-                    g2d.drawString(qMark, x, y);
+            // Draw bonus points
+            int bonus = nodeBonusPoints.getOrDefault(number, 0);
+            g2d.setFont(new Font("Arial", Font.PLAIN, 9));
+            g2d.setColor(new Color(0, 100, 0));
+            g2d.drawString("+" + bonus, 5, 28);
+
+            // Draw ladder indicator
+            if (links.containsKey(number)) {
+                g2d.setColor(Color.GREEN);
+                g2d.setStroke(new BasicStroke(2));
+                g2d.drawLine(0, getHeight(), getWidth(), 0);
             }
+
+            // Draw players
+            int i = 0;
+            for (Player p : playersHere) {
+                g2d.setColor(p.getColor());
+                g2d.fillOval(5 + (i * 20), 35, 15, 15);
+                i++;
+            }
+        }
+    }
+
+    private static class DicePanel extends JPanel {
+        private int val;
+        public DicePanel(int v) {
+            this.val = v;
+            setPreferredSize(new Dimension(100, 100));
+            setBackground(Color.WHITE);
+            setBorder(BorderFactory.createLineBorder(Color.BLACK, 2));
+        }
+        public void setDiceValue(int v) { this.val = v; repaint(); }
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2d = (Graphics2D) g;
+            g2d.setColor(val < 0 ? Color.RED : Color.BLACK);
+            g2d.setFont(new Font("Arial", Font.BOLD, 40));
+            String txt = (val == 0) ? "?" : String.valueOf(Math.abs(val));
+            g2d.drawString(txt, 40, 60);
+            if (val < 0) { g2d.setFont(new Font("Arial", Font.PLAIN, 12)); g2d.drawString("Mundur", 10, 90); }
         }
     }
 

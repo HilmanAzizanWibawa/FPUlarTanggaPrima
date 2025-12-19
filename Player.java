@@ -48,7 +48,7 @@ public class Player implements Comparable<Player> {
     @Override
     public int compareTo(Player other) {
         // Higher points first (descending order)
-        return Integer.compare(other.bonusPoints, this.bonusPoints);
+        return Integer.compare(other.getBonusPoints(), this.getBonusPoints());
     }
 
     @Override

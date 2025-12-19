@@ -139,7 +139,7 @@ public class LobbyFrame extends JFrame {
         return button;
     }
 
-    private void showSettingDialog() {
+    public void showSettingDialog() {
         JDialog dialog = new JDialog(this, "⚙️ Pengaturan Volume", true);
         dialog.setLayout(new BorderLayout());
 
