@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+
 public class LobbyFrame extends JFrame {
     private final PapanUlarTanggaGUI gameFrame;
     private int numPlayers = 2;
