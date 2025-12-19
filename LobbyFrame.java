@@ -7,14 +7,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-
 public class LobbyFrame extends JFrame {
     private final PapanUlarTanggaGUI gameFrame;
     private int numPlayers = 2;
     private final Color[] playerColors;
     private BufferedImage backgroundImage;
 
-    // Warna Tema untuk Komponen
     private static final Color BUTTON_YELLOW = new Color(0xFFC700);
     private static final Color BUTTON_BORDER = new Color(0xFF8C00);
     private static final Color TEXT_WHITE = Color.WHITE;
@@ -24,7 +22,6 @@ public class LobbyFrame extends JFrame {
         this.gameFrame = gameFrame;
         this.playerColors = PapanUlarTanggaGUI.PLAYER_COLORS;
 
-        // --- PROSES MEMUAT GAMBAR BOS_2.png ---
         try {
             backgroundImage = ImageIO.read(new File("images/BOS_3.png"));
         } catch (IOException e) {
@@ -34,16 +31,13 @@ public class LobbyFrame extends JFrame {
         setTitle("🎲 ULAR TANGGA PRIMA");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
-        // --- PANEL UTAMA DENGAN BACKGROUND CUSTOM ---
         JPanel mainPanel = new JPanel(new BorderLayout()) {
             @Override
             protected void paintComponent(Graphics g) {
                 super.paintComponent(g);
                 if (backgroundImage != null) {
-                    // Gambar memenuhi seluruh area frame
                     g.drawImage(backgroundImage, 0, 0, getWidth(), getHeight(), this);
                 } else {
-                    // Warna cadangan jika gambar gagal dimuat
                     g.setColor(new Color(0x1E4080));
                     g.fillRect(0, 0, getWidth(), getHeight());
                 }
@@ -52,26 +46,24 @@ public class LobbyFrame extends JFrame {
         mainPanel.setOpaque(false);
         setContentPane(mainPanel);
 
-        // Menambahkan Komponen UI di atas background
         mainPanel.add(createHeaderPanel(), BorderLayout.NORTH);
         mainPanel.add(createPlayControlPanel(), BorderLayout.CENTER);
 
-        setSize(700, 650); // Ukuran permintaan Anda
+        setSize(700, 650);
         setLocationRelativeTo(null);
-        setResizable(false); // Disarankan agar background tidak distorsi
+        setResizable(false);
         setVisible(true);
     }
 
     private JPanel createHeaderPanel() {
         JPanel header = new JPanel();
-        header.setOpaque(false); // Transparan agar background terlihat
+        header.setOpaque(false);
         header.setBorder(BorderFactory.createEmptyBorder(40, 20, 10, 20));
 
         JLabel title = new JLabel("ULAR TANGGA PRIMA", SwingConstants.CENTER);
         title.setFont(new Font("Arial Black", Font.BOLD, 40));
         title.setForeground(TEXT_WHITE);
 
-        // Memberi bayangan tipis agar teks terbaca di background apapun
         title.setUI(new javax.swing.plaf.basic.BasicLabelUI() {
             @Override
             protected void paintEnabledText(JLabel l, Graphics g, String s, int x, int y) {
@@ -89,24 +81,23 @@ public class LobbyFrame extends JFrame {
     private JPanel createPlayControlPanel() {
         JPanel controlPanel = new JPanel();
         controlPanel.setLayout(new BoxLayout(controlPanel, BoxLayout.Y_AXIS));
-        controlPanel.setOpaque(false); // Transparan
+        controlPanel.setOpaque(false);
 
-        // Tombol PLAY
         JButton playButton = createStyledButton("PLAY", 50);
         playButton.setMaximumSize(new Dimension(250, 100));
         playButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         playButton.addActionListener(e -> showPlayerSelectionDialog());
 
+        // Tombol Pengaturan
+        JButton settingsButton = createStyledButton("⚙️ PENGATURAN", 30);
+        settingsButton.setMaximumSize(new Dimension(250, 70));
+        settingsButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        settingsButton.addActionListener(e -> showSettingDialog());
+
         controlPanel.add(Box.createVerticalGlue());
         controlPanel.add(playButton);
         controlPanel.add(Box.createVerticalStrut(20));
-
-        JLabel infoLabel = new JLabel("", SwingConstants.CENTER);
-        infoLabel.setFont(new Font("Arial", Font.BOLD, 18));
-        infoLabel.setForeground(TEXT_WHITE);
-        infoLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        controlPanel.add(infoLabel);
-
+        controlPanel.add(settingsButton);
         controlPanel.add(Box.createVerticalGlue());
 
         return controlPanel;
@@ -148,13 +139,77 @@ public class LobbyFrame extends JFrame {
         return button;
     }
 
+    private void showSettingDialog() {
+        JDialog dialog = new JDialog(this, "⚙️ Pengaturan Volume", true);
+        dialog.setLayout(new BorderLayout());
+
+        // Panel dengan gradient background
+        JPanel contentPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2d = (Graphics2D) g;
+                GradientPaint gradient = new GradientPaint(
+                        0, 0, new Color(0x667eea),
+                        0, getHeight(), new Color(0x764ba2)
+                );
+                g2d.setPaint(gradient);
+                g2d.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(30, 40, 30, 40));
+
+        JLabel titleLabel = new JLabel("🔊 Volume Musik");
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 26));
+        titleLabel.setForeground(Color.WHITE);
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        contentPanel.add(titleLabel);
+        contentPanel.add(Box.createVerticalStrut(30));
+
+        JSlider volSlider = new JSlider(0, 100);
+        volSlider.setOpaque(false);
+        volSlider.setForeground(Color.WHITE);
+        volSlider.setMajorTickSpacing(25);
+        volSlider.setMinorTickSpacing(5);
+        volSlider.setPaintTicks(true);
+        volSlider.setPaintLabels(true);
+
+        if (gameFrame.volumeControl != null) {
+            float currentVol = (float) Math.pow(10f, gameFrame.volumeControl.getValue() / 20f);
+            volSlider.setValue((int) (currentVol * 100));
+        }
+
+        volSlider.addChangeListener(e -> gameFrame.setVolume(volSlider.getValue() / 100f));
+
+        contentPanel.add(volSlider);
+        contentPanel.add(Box.createVerticalStrut(30));
+
+        JButton okBtn = new JButton("Tutup");
+        okBtn.setFont(new Font("Arial", Font.BOLD, 16));
+        okBtn.setBackground(new Color(0xFFC700));
+        okBtn.setForeground(new Color(0x4A2C00));
+        okBtn.setFocusPainted(false);
+        okBtn.setBorderPainted(false);
+        okBtn.setPreferredSize(new Dimension(120, 40));
+        okBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        okBtn.addActionListener(e -> dialog.dispose());
+
+        contentPanel.add(okBtn);
+
+        dialog.add(contentPanel);
+        dialog.setSize(400, 250);
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
     private void showPlayerSelectionDialog() {
         JDialog dialog = new JDialog(this, "Pilih Pemain", true);
         dialog.setLayout(new BorderLayout());
 
         JPanel contentPanel = new JPanel();
         contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
-        contentPanel.setBackground(new Color(0x1E2A38)); // Warna gelap kontras
+        contentPanel.setBackground(new Color(0x1E2A38));
         contentPanel.setBorder(BorderFactory.createEmptyBorder(20, 30, 20, 30));
 
         JLabel titleLabel = new JLabel("Jumlah Pemain");
@@ -171,10 +226,11 @@ public class LobbyFrame extends JFrame {
             final int playerCount = i;
             JButton btn = new JButton(i + " Pemain");
             btn.setBackground(BUTTON_YELLOW);
+            btn.setFont(new Font("Arial", Font.BOLD, 14));
             btn.addActionListener(e -> {
                 numPlayers = playerCount;
                 dialog.dispose();
-                startGameWithPlayers();
+                showPlayerNameInputDialog();
             });
             buttonPanel.add(btn);
         }
@@ -186,12 +242,63 @@ public class LobbyFrame extends JFrame {
         dialog.setVisible(true);
     }
 
-    private void startGameWithPlayers() {
-        List<Player> players = new ArrayList<>();
+    private void showPlayerNameInputDialog() {
+        JDialog dialog = new JDialog(this, "Input Nama Pemain", true);
+        dialog.setLayout(new BorderLayout());
+
+        JPanel contentPanel = new JPanel();
+        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+        contentPanel.setBackground(new Color(0x1E2A38));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(20, 30, 20, 30));
+
+        JLabel titleLabel = new JLabel("Masukkan Nama Pemain");
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        titleLabel.setForeground(Color.WHITE);
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        contentPanel.add(titleLabel);
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        JTextField[] nameFields = new JTextField[numPlayers];
         for (int i = 0; i < numPlayers; i++) {
-            players.add(new Player("Pemain " + (i + 1), playerColors[i]));
+            JPanel playerPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            playerPanel.setOpaque(false);
+
+            JLabel playerLabel = new JLabel("Pemain " + (i + 1) + ": ");
+            playerLabel.setForeground(playerColors[i]);
+            playerLabel.setFont(new Font("Arial", Font.BOLD, 16));
+
+            nameFields[i] = new JTextField(15);
+            nameFields[i].setFont(new Font("Arial", Font.PLAIN, 14));
+            nameFields[i].setText("Pemain " + (i + 1));
+
+            playerPanel.add(playerLabel);
+            playerPanel.add(nameFields[i]);
+            contentPanel.add(playerPanel);
+            contentPanel.add(Box.createVerticalStrut(10));
         }
-        gameFrame.start(players);
-        this.dispose();
+
+        JButton startButton = new JButton("Mulai Permainan");
+        startButton.setBackground(BUTTON_YELLOW);
+        startButton.setFont(new Font("Arial", Font.BOLD, 16));
+        startButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        startButton.addActionListener(e -> {
+            List<Player> players = new ArrayList<>();
+            for (int i = 0; i < numPlayers; i++) {
+                String name = nameFields[i].getText().trim();
+                if (name.isEmpty()) name = "Pemain " + (i + 1);
+                players.add(new Player(name, playerColors[i]));
+            }
+            dialog.dispose();
+            gameFrame.start(players);
+            this.dispose();
+        });
+
+        contentPanel.add(Box.createVerticalStrut(10));
+        contentPanel.add(startButton);
+
+        dialog.add(contentPanel);
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 }
